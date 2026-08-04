@@ -79,16 +79,21 @@ final class PhoneServer {
         connection = conn
         inFlight = 0
 
-        conn.stateUpdateHandler = { [weak self] st in
-            guard let self else { return }
+        // Identity-check every callback against the current connection. The
+        // connection we just cancelled reports `.cancelled` asynchronously, and
+        // without this guard that stale callback lands *after* the replacement
+        // reports `.ready` and knocks state back to .listening — at which point
+        // `send()`'s guard silently drops everything, HELLO included. Presents
+        // as a connection that opens and then sends zero bytes.
+        conn.stateUpdateHandler = { [weak self, weak conn] st in
+            guard let self, let conn, self.connection === conn else { return }
             switch st {
             case .ready:
                 self.state = .connected
                 self.sendHello()
             case .failed, .cancelled:
-                if case .connected = self.state {
-                    self.state = .listening(port: self.port.rawValue)
-                }
+                self.connection = nil
+                self.state = .listening(port: self.port.rawValue)
             default: break
             }
         }
