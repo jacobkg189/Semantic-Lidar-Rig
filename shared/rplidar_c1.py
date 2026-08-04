@@ -198,12 +198,20 @@ class RPLidarC1:
         self._buf.clear()
 
     def close(self) -> None:
+        # Teardown is best-effort. If the adapter has already fallen off the USB
+        # bus these writes raise, and letting that propagate would replace the
+        # real failure with a confusing one from the cleanup path.
         try:
             if self._scanning:
                 self.stop()
             self._serial.dtr = True  # park the motor
+        except Exception:
+            pass
         finally:
-            self._serial.close()
+            try:
+                self._serial.close()
+            except Exception:
+                pass
 
     # --- scanning ----------------------------------------------------------
 

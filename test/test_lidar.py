@@ -13,8 +13,11 @@ import argparse
 import statistics
 import sys
 import time
+from pathlib import Path
 
-from rplidar_c1 import (
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "shared"))
+
+from rplidar_c1 import (  # noqa: E402
     DEFAULT_BAUD,
     Measurement,
     RPLidarC1,

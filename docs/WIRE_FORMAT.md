@@ -1,0 +1,110 @@
+# Wire format
+
+The contract between the iPhone and the Mac. Changing it means changing both
+sides, so it gets its own document and a version byte.
+
+## Topology (v0)
+
+```
+C1 ──USB serial──> MacBook <──TCP over usbmuxd── iPhone
+                   (local, no wire format)       (this document)
+```
+
+The lidar is plugged straight into the Mac, so there is exactly **one network
+link in v0** and only the phone stream needs a wire format. When the rig moves
+to a Pi on the mast, a second link appears (Pi → Mac) carrying lidar
+revolutions; `LIDAR_REVOLUTION` below is reserved for that and unused today.
+
+## Transport
+
+TCP, tunnelled over USB by `usbmuxd`. The **iPhone listens**, the **Mac
+connects** — `iproxy` maps a Mac-local port to a port on the device, so from
+the Mac's point of view the phone is at `127.0.0.1`.
+
+```
+iproxy 5555 5555        # mac localhost:5555 -> iphone:5555
+```
+
+## Framing
+
+Every message is length-prefixed. All integers **little-endian** (both ends are
+ARM64, so this is the native ordering on each).
+
+```
+┌────────────┬────────────┬──────────────────┐
+│ length u32 │ type   u8  │ payload (length) │
+└────────────┴────────────┴──────────────────┘
+```
+
+`length` counts the payload only — it excludes the 5-byte header. A reader that
+does not recognise a `type` must skip `length` bytes and continue, which is what
+makes adding message types backward-compatible.
+
+## Message types
+
+### `0x01 HELLO` — first message on every connection
+
+```
+protocol_version   u16     must equal PROTOCOL_VERSION
+device_name_len    u16
+device_name        utf8    e.g. "iPhone17,2"
+os_version_len     u16
+os_version         utf8
+capabilities       u32     bitfield, see below
+```
+
+Capability bits: `1<<0` scene reconstruction, `1<<1` scene depth,
+`1<<2` camera frames. The Mac logs these; it does not require any of them.
+
+### `0x02 POSE` — one per ARKit frame, ~60 Hz
+
+```
+t_device_us        u64     ARKit frame timestamp, microseconds
+tx, ty, tz         f32×3   camera position, ARKit world frame, metres
+qx, qy, qz, qw     f32×4   camera orientation, quaternion
+fx, fy, cx, cy     f32×4   camera intrinsics, pixels
+tracking_state     u8      0 unavailable, 1 limited, 2 normal
+```
+
+53 bytes; ~3 KB/s at 60 Hz. Cheap enough that there is no reason to decimate it.
+
+`t_device_us` is in ARKit's own clock (`CACurrentMediaTime`), which is **not**
+the Mac's clock. Phase 0 ignores it and stamps on arrival; Phase 2 solves for
+the offset. Both timestamps get recorded so Phase 2 can be done offline.
+
+ARKit's convention: right-handed, **−Z forward**, +Y up, origin at session start.
+
+### `0x03 CAMERA_FRAME` — JPEG, rate-limited
+
+```
+t_device_us        u64
+width, height      u16×2
+jpeg_len           u32
+jpeg               bytes
+```
+
+The fat stream. Rate-limit on the phone rather than dropping on the Mac — the
+usbmuxd tunnel is fast but not unlimited, and a blocked write stalls the pose
+stream behind it.
+
+### `0x04 SCENE_DEPTH` — reserved, Phase 4
+
+ARKit's 256×192 depth buffer. Not implemented yet.
+
+### `0x10 LIDAR_REVOLUTION` — reserved, Pi bridge only
+
+```
+t_arrival_us       u64
+rev_id             u32
+sample_count       u16
+samples            (angle_q6 u16, dist_q2 u16, quality u8) × count
+```
+
+Samples stay in the C1's native fixed-point units — `angle_q6 / 64.0` gives
+degrees, `dist_q2 / 4.0` gives millimetres. Half the bytes of floats and no
+precision lost.
+
+## Versioning
+
+Bump `PROTOCOL_VERSION` on any change to an existing message's layout. Adding a
+new message type does not require a bump, because unknown types are skipped.
