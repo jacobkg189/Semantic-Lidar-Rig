@@ -16,7 +16,7 @@ gate.
 shared/              driver + wire-format codec, used by every phase
 phase0_transport/    ✅ get both sensor streams onto the Mac
 phase1_record_replay/   ✅ record to disk, replay deterministically
-phase2_time_sync/       ⬜ solve the lidar↔ARKit clock offset
+phase2_time_sync/       🟡 clock model done; lidar lag provisional
 phase3_extrinsics/      ⬜ solve the lidar↔camera rigid transform
 phase4_fusion/          ⬜ deskew, accumulate, pose-graph optimise
 phase5_semantics/       ⬜ project labels onto the fused cloud
@@ -44,7 +44,7 @@ cd ios && xcodegen generate
 |---|---|---|---|
 | 0 | Transport | Both streams at stable rates | ✅ **Passed** — 10.3 Hz lidar, 60.1 Hz poses |
 | 1 | Record & replay | Replay deterministic + lossless | ✅ **Passed** — 1200 poses, 153 revs, exact |
-| 2 | Time sync | Offset stable to a few ms | Not started |
+| 2 | Time sync | Reproducible clock model | 🟡 clock model ✅ (1.15 ms); lag provisional (−11.2 ±6 ms) |
 | 3 | Extrinsics | Lidar lands on ARKit walls ±2 cm | Not started |
 | 4 | Fusion | Loop closes under ~5 cm | Not started |
 | 5 | Semantics | Labels stable across viewpoints | Not started |
