@@ -36,6 +36,7 @@ class ProtocolError(Exception):
 _HELLO_HEAD = struct.Struct("<H")
 _POSE = struct.Struct("<Q3f4f4fB")
 _FRAME_HEAD = struct.Struct("<QHHI")
+_DEPTH_HEAD = struct.Struct("<QHH4f")
 
 
 @dataclass
@@ -90,6 +91,24 @@ class CameraFrame:
 
 
 @dataclass
+class SceneDepth:
+    t_device_us: int
+    width: int
+    height: int
+    intrinsics: tuple[float, float, float, float]  # already scaled to w×h
+    depth_mm: bytes      # u16 little-endian, row-major
+    confidence: bytes    # u8, row-major
+    t_arrival_us: int = 0
+
+    def as_arrays(self):
+        """(depth_metres, confidence) as H×W arrays. numpy only where needed."""
+        import numpy as np
+        d = np.frombuffer(self.depth_mm, dtype="<u2").reshape(self.height, self.width)
+        c = np.frombuffer(self.confidence, dtype=np.uint8).reshape(self.height, self.width)
+        return d.astype(np.float32) / 1000.0, c
+
+
+@dataclass
 class UnknownMessage:
     """A type this build doesn't understand. Skipped, not fatal — that's what
     makes adding message types a non-breaking change."""
@@ -125,6 +144,14 @@ def decode(type_id: int, payload: bytes):
             intrinsics=(f[8], f[9], f[10], f[11]),
             tracking_state=f[12],
         )
+
+    if type_id == MsgType.SCENE_DEPTH:
+        t, w, h, fx, fy, cx, cy = _DEPTH_HEAD.unpack_from(payload, 0)
+        off = _DEPTH_HEAD.size
+        n = w * h
+        return SceneDepth(t, w, h, (fx, fy, cx, cy),
+                          payload[off:off + 2 * n],
+                          payload[off + 2 * n:off + 3 * n])
 
     if type_id == MsgType.CAMERA_FRAME:
         t, w, h, n = _FRAME_HEAD.unpack_from(payload, 0)

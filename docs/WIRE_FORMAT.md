@@ -87,9 +87,28 @@ The fat stream. Rate-limit on the phone rather than dropping on the Mac — the
 usbmuxd tunnel is fast but not unlimited, and a blocked write stalls the pose
 stream behind it.
 
-### `0x04 SCENE_DEPTH` — reserved, Phase 4
+### `0x04 SCENE_DEPTH` — ARKit's LiDAR depth image
 
-ARKit's 256×192 depth buffer. Not implemented yet.
+```
+t_device_us        u64
+width, height      u16×2   256×192 on current hardware
+fx, fy, cx, cy     f32×4   intrinsics SCALED to the depth resolution
+depth_mm           u16 × width*height   0 = no return
+confidence         u8  × width*height   0 low, 1 medium, 2 high
+```
+
+The dense geometry the C1 cannot provide: it is a planar scanner and only sweeps
+3D because the rig moves, so its coverage is inherently sparse and streaky.
+
+Depth is millimetres in `u16` rather than `float16`: exact to 1 mm out to 65 m,
+where half-precision floats lose resolution with range. Same bytes either way.
+
+**Intrinsics are scaled**, not the camera's native values. `ARFrame.camera.intrinsics`
+describes the full-resolution capture (e.g. 1920×1440); the depth map is 256×192,
+so fx, fy, cx and cy are all multiplied by the ratio before sending. Unprojecting
+with unscaled intrinsics yields a plausible-looking but badly wrong cloud.
+
+~144 KB per frame, so it is rate-limited on the phone like camera frames.
 
 ### `0x10 LIDAR_REVOLUTION` — reserved, Pi bridge only
 
