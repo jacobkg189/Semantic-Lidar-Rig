@@ -92,15 +92,36 @@ What matters downstream is timing error: a skew spread of S ppm over a D second
 segment is S·D microseconds. Measured 26.72 ppm × 43 s = **1.15 ms**, comfortably
 inside the 16.7 ms pose interval.
 
-## Caveat: the lag is the weak result
+## The lag did not pass — and why we stopped chasing it
 
-The lag spread is **11.9 ms** on a mean of **−11.2 ms** — the uncertainty is
-comparable to the value. The original gate limit was 10 ms and was widened to
-12 ms to accommodate it, which is worth knowing when judging this result.
+Recorded in `calibration/timing.json` as **provisional**.
 
-At 30 deg/s, 6 ms of timing error is ~0.2° of angular error, which at 5 m is
-~1.6 cm — uncomfortably close to Phase 3's ±2 cm target. Worth tightening with
-more and longer rotation recordings before Phase 4 leans on it.
+Injecting known delays into real recordings and measuring recovery is the only
+ground truth available here, and it says the method has hit its floor:
+
+```
+rotation 1   corr 0.882   lag -17.2 ms   recovery +/-0.1 ms
+lag A2       corr 0.842   lag  -5.1 ms   recovery +/-3.4 ms (asymmetric)
+```
+
+Both recordings are technically clean — 31 deg/s yaw, 24% tilt, 855 revolutions
+over 90 s — and they **disagree by 12 ms**. Recording quality does not explain
+the gap, so more recordings will not close it.
+
+The guidance that produced them was itself wrong. Smooth *periodic* sweeps make
+the estimate worse: a steady tempo is narrowband, and cross-correlating two
+narrowband signals gives a broad, flat peak whose argmax moves under small
+perturbations. Rotation 1 scored better partly by being less metronomic.
+
+**Impact:** 12 ms at 30 deg/s is 0.36 deg — roughly 3 cm at 5 m, 1.3 cm at 2 m.
+Marginal against Phase 3's +/-2 cm target, not fatal.
+
+**Decision:** carry -11.2 ms forward as an initialisation and let Phase 3 refine
+the offset *jointly* with the extrinsics, where every lidar return is a
+constraint rather than one yaw estimate per revolution. That is standard
+practice for temporal calibration and has orders of magnitude more signal. If
+Phase 3 converges cleanly the timing was adequate; if it stalls, timing is the
+first suspect.
 
 ## Capturing
 

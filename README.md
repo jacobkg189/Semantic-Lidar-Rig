@@ -17,7 +17,7 @@ shared/              driver + wire-format codec, used by every phase
 phase0_transport/    ✅ get both sensor streams onto the Mac
 phase1_record_replay/   ✅ record to disk, replay deterministically
 phase2_time_sync/       🟡 clock model done; lidar lag provisional
-phase3_extrinsics/      ⬜ solve the lidar↔camera rigid transform
+phase3_extrinsics/      🟡 params cross-validated; residual is drift (Phase 4)
 phase4_fusion/          ⬜ deskew, accumulate, pose-graph optimise
 phase5_semantics/       ⬜ project labels onto the fused cloud
 phase6_validation/      ⬜ measure the real error budget
@@ -44,8 +44,8 @@ cd ios && xcodegen generate
 |---|---|---|---|
 | 0 | Transport | Both streams at stable rates | ✅ **Passed** — 10.3 Hz lidar, 60.1 Hz poses |
 | 1 | Record & replay | Replay deterministic + lossless | ✅ **Passed** — 1200 poses, 153 revs, exact |
-| 2 | Time sync | Reproducible clock model | 🟡 clock model ✅ (1.15 ms); lag provisional (−11.2 ±6 ms) |
-| 3 | Extrinsics | Lidar lands on ARKit walls ±2 cm | Not started |
+| 2 | Time sync | Reproducible clock model | 🟡 clock model ✅; lag provisional, refined in Phase 3 |
+| 3 | Extrinsics | Self-consistent walls | 🟡 params cross-validated (1.3 cm); walls 4.2 cm, drift-limited |
 | 4 | Fusion | Loop closes under ~5 cm | Not started |
 | 5 | Semantics | Labels stable across viewpoints | Not started |
 | 6 | Validation | Error budget vs tape measure | Not started |
