@@ -32,10 +32,15 @@ struct ContentView: View {
             if model.streamer.frameCount > 0 {
                 row("Frames sent", "\(model.streamer.frameCount)")
             }
+            if model.streamer.depthCount > 0 {
+                row("Depth sent", "\(model.streamer.depthCount)")
+            }
 
             Divider()
 
             Toggle("Stream camera frames (10 Hz)", isOn: $model.sendFrames)
+                .font(.callout)
+            Toggle("Stream LiDAR depth (5 Hz)", isOn: $model.sendDepth)
                 .font(.callout)
 
             Text(model.hint)
@@ -68,6 +73,9 @@ final class StreamModel: ObservableObject {
     @Published var linkColor: Color = .secondary
     @Published var sendFrames = false {
         didSet { streamer.cameraFrameHz = sendFrames ? 10 : 0 }
+    }
+    @Published var sendDepth = false {
+        didSet { streamer.sceneDepthHz = sendDepth ? 5 : 0 }
     }
 
     var hint: String {

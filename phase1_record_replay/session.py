@@ -33,6 +33,7 @@ POSE_REC = struct.Struct("<Q53s")
 LIDAR_HEAD = struct.Struct("<QIH")     # arrival, rev_id, sample_count
 LIDAR_SAMPLE = struct.Struct("<HHB")   # angle_q6, dist_q2, quality
 FRAME_HEAD = struct.Struct("<QQHHI")   # arrival, device_ts, w, h, jpeg_len
+DEPTH_HEAD = struct.Struct("<QI")      # arrival, payload length
 
 
 class Stream(IntEnum):
@@ -42,6 +43,7 @@ class Stream(IntEnum):
     POSE = 0
     LIDAR = 1
     FRAME = 2
+    DEPTH = 3
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,8 @@ class SessionWriter:
         self._poses = open(self.dir / "poses.bin", "wb")
         self._lidar = open(self.dir / "lidar.bin", "wb")
         self._frames = open(self.dir / "frames.bin", "wb")
-        self.counts = {"poses": 0, "lidar": 0, "frames": 0, "lidar_samples": 0}
+        self._depth = open(self.dir / "depth.bin", "wb")
+        self.counts = {"poses": 0, "lidar": 0, "frames": 0, "depth": 0, "lidar_samples": 0}
         self.meta: dict = {
             "format_version": FORMAT_VERSION,
             "notes": notes,
@@ -111,8 +114,15 @@ class SessionWriter:
         self._frames.write(FRAME_HEAD.pack(t_arrival_us, t_device_us, w, h, len(jpeg)) + jpeg)
         self.counts["frames"] += 1
 
+    def write_depth(self, t_arrival_us: int, payload: bytes) -> None:
+        """Stored verbatim: the payload already carries device timestamp,
+        dimensions and the SCALED intrinsics, so nothing has to be re-derived
+        at read time and nothing can drift out of sync with the sender."""
+        self._depth.write(DEPTH_HEAD.pack(t_arrival_us, len(payload)) + payload)
+        self.counts["depth"] += 1
+
     def close(self) -> None:
-        for f in (self._poses, self._lidar, self._frames):
+        for f in (self._poses, self._lidar, self._frames, self._depth):
             f.close()
         self.meta["counts"] = self.counts
         # Manifest is written last so its presence means the session is complete.
@@ -167,6 +177,20 @@ class SessionReader:
             yield Record(Stream.FRAME, t, data[off:end])
             off = end
 
+    def depth(self) -> Iterator[Record]:
+        path = self.dir / "depth.bin"
+        if not path.exists():          # sessions recorded before depth existed
+            return
+        data = path.read_bytes()
+        off = 0
+        while off + DEPTH_HEAD.size <= len(data):
+            t, n = DEPTH_HEAD.unpack_from(data, off)
+            end = off + DEPTH_HEAD.size + n
+            if end > len(data):
+                break
+            yield Record(Stream.DEPTH, t, data[off + DEPTH_HEAD.size:end])
+            off = end
+
     def records(self) -> Iterator[Record]:
         """All streams merged into arrival order.
 
@@ -177,7 +201,8 @@ class SessionReader:
         """
         merged = [
             (r.t_arrival_us, r.stream.value, i, r)
-            for i, r in enumerate(list(self.poses()) + list(self.lidar()) + list(self.frames()))
+            for i, r in enumerate(list(self.poses()) + list(self.lidar())
+                                  + list(self.frames()) + list(self.depth()))
         ]
         merged.sort(key=lambda x: (x[0], x[1], x[2]))
         for _, _, _, r in merged:

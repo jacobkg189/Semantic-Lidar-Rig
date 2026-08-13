@@ -18,7 +18,7 @@ phase0_transport/    ✅ get both sensor streams onto the Mac
 phase1_record_replay/   ✅ record to disk, replay deterministically
 phase2_time_sync/       🟡 clock model done; lidar lag provisional
 phase3_extrinsics/      🟡 params cross-validated; residual is drift (Phase 4)
-phase4_fusion/          ⬜ deskew, accumulate, pose-graph optimise
+phase4_fusion/          ✅ pose graph; ⬜ dense depth awaiting a recording
 phase5_semantics/       ⬜ project labels onto the fused cloud
 phase6_validation/      ⬜ measure the real error budget
 ios/                 the iOS app (grows across phases, XcodeGen-managed)
@@ -46,7 +46,7 @@ cd ios && xcodegen generate
 | 1 | Record & replay | Replay deterministic + lossless | ✅ **Passed** — 1200 poses, 153 revs, exact |
 | 2 | Time sync | Reproducible clock model | 🟡 clock model ✅; lag provisional, refined in Phase 3 |
 | 3 | Extrinsics | Self-consistent walls | 🟡 params cross-validated (1.3 cm); walls 4.2 cm, drift-limited |
-| 4 | Fusion | Loop closes under ~5 cm | Not started |
+| 4 | Fusion | Loop closes; walls consistent | ✅ pose graph (3.4 cm, both walks); depth built |
 | 5 | Semantics | Labels stable across viewpoints | Not started |
 | 6 | Validation | Error budget vs tape measure | Not started |
 

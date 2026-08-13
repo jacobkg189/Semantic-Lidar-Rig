@@ -42,6 +42,14 @@ final class ARStreamer: NSObject, ObservableObject {
     var cameraFrameHz: Double = 0      // 0 disables frame streaming
     private var lastFrameSent: TimeInterval = 0
 
+    /// ARKit's LiDAR depth — the dense geometry the C1 cannot supply, since a
+    /// planar scanner only sweeps 3D as the rig moves and stays sparse.
+    /// ~144 KB per frame, so it is rate-limited like camera frames.
+    var sceneDepthHz: Double = 0
+    private var lastDepthSent: TimeInterval = 0
+    private let depthQueue = DispatchQueue(label: "depth-pack", qos: .utility)
+    @Published private(set) var depthCount: Int = 0
+
     private let jpegQueue = DispatchQueue(label: "jpeg-encode", qos: .utility)
     private let ciContext = CIContext()
 
@@ -115,6 +123,72 @@ extension ARStreamer: ARSessionDelegate {
         }
 
         maybeSendCameraFrame(frame)
+        maybeSendSceneDepth(frame)
+    }
+
+    private func maybeSendSceneDepth(_ frame: ARFrame) {
+        guard sceneDepthHz > 0, let depth = frame.sceneDepth else { return }
+        guard frame.timestamp - lastDepthSent >= 1.0 / sceneDepthHz else { return }
+        lastDepthSent = frame.timestamp
+
+        let timestampUs = UInt64(frame.timestamp * 1_000_000)
+        let depthMap = depth.depthMap
+        let confMap = depth.confidenceMap
+        let w = CVPixelBufferGetWidth(depthMap)
+        let h = CVPixelBufferGetHeight(depthMap)
+
+        // Scale the camera intrinsics from capture resolution to depth
+        // resolution. Getting this wrong yields a cloud that looks reasonable
+        // but is geometrically incorrect, which is hard to spot later.
+        let k = frame.camera.intrinsics
+        let imageRes = frame.camera.imageResolution
+        let sx = Float(w) / Float(imageRes.width)
+        let sy = Float(h) / Float(imageRes.height)
+        let intr = (fx: k.columns.0.x * sx, fy: k.columns.1.y * sy,
+                    cx: k.columns.2.x * sx, cy: k.columns.2.y * sy)
+
+        depthQueue.async { [weak self] in
+            guard let self else { return }
+            CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+            guard let base = CVPixelBufferGetBaseAddress(depthMap) else { return }
+
+            let stride = CVPixelBufferGetBytesPerRow(depthMap) / MemoryLayout<Float32>.size
+            var mm = [UInt16](repeating: 0, count: w * h)
+            let f = base.assumingMemoryBound(to: Float32.self)
+            for y in 0..<h {
+                for x in 0..<w {
+                    let v = f[y * stride + x]
+                    // Non-finite and out-of-range become 0 = "no return", which
+                    // the Mac treats as missing rather than as a point at origin.
+                    mm[y * w + x] = (v.isFinite && v > 0 && v < 65.0)
+                        ? UInt16(v * 1000.0) : 0
+                }
+            }
+
+            var conf = [UInt8](repeating: 0, count: w * h)
+            if let c = confMap {
+                CVPixelBufferLockBaseAddress(c, .readOnly)
+                if let cb = CVPixelBufferGetBaseAddress(c) {
+                    let cstride = CVPixelBufferGetBytesPerRow(c)
+                    let u = cb.assumingMemoryBound(to: UInt8.self)
+                    for y in 0..<h {
+                        for x in 0..<w { conf[y * w + x] = u[y * cstride + x] }
+                    }
+                }
+                CVPixelBufferUnlockBaseAddress(c, .readOnly)
+            }
+
+            self.server.send(WireFormat.sceneDepth(
+                timestampUs: timestampUs,
+                width: UInt16(w), height: UInt16(h),
+                intrinsics: intr,
+                depthMillimetres: mm.withUnsafeBufferPointer { Data(buffer: $0) },
+                confidence: conf.withUnsafeBufferPointer { Data(buffer: $0) }
+            ), droppable: true)
+
+            DispatchQueue.main.async { self.depthCount += 1 }
+        }
     }
 
     private func maybeSendCameraFrame(_ frame: ARFrame) {

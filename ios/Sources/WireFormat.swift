@@ -61,6 +61,31 @@ enum WireFormat {
         return frame(.pose, p)
     }
 
+    /// Depth in millimetres as UInt16, not float16: exact to 1 mm out to 65 m,
+    /// where half-precision loses resolution with range, for the same bytes.
+    ///
+    /// `intrinsics` must already be SCALED to the depth resolution. ARKit's
+    /// camera intrinsics describe the full-res capture (e.g. 1920x1440) while
+    /// the depth map is 256x192; unprojecting with unscaled values gives a
+    /// plausible-looking but badly wrong cloud.
+    static func sceneDepth(
+        timestampUs: UInt64,
+        width: UInt16, height: UInt16,
+        intrinsics: (fx: Float, fy: Float, cx: Float, cy: Float),
+        depthMillimetres: Data,
+        confidence: Data
+    ) -> Data {
+        var p = Data(capacity: 28 + depthMillimetres.count + confidence.count)
+        p.appendLE(timestampUs)
+        p.appendLE(width)
+        p.appendLE(height)
+        p.appendLE(intrinsics.fx); p.appendLE(intrinsics.fy)
+        p.appendLE(intrinsics.cx); p.appendLE(intrinsics.cy)
+        p.append(depthMillimetres)
+        p.append(confidence)
+        return frame(.sceneDepth, p)
+    }
+
     static func cameraFrame(timestampUs: UInt64, width: UInt16, height: UInt16, jpeg: Data) -> Data {
         var p = Data(capacity: 16 + jpeg.count)
         p.appendLE(timestampUs)

@@ -26,7 +26,7 @@ sys.path[:0] = [
 
 from lidar_source import SerialLidarSource  # noqa: E402
 from phone_link import DEFAULT_HOST, DEFAULT_PORT, PhoneLinkError, PhoneStream  # noqa: E402
-from protocol import CameraFrame, Hello, Pose, _POSE  # noqa: E402
+from protocol import CameraFrame, Hello, Pose, SceneDepth, _POSE, _DEPTH_HEAD  # noqa: E402
 from rplidar_c1 import RPLidarError  # noqa: E402
 from session import SessionWriter  # noqa: E402
 
@@ -40,6 +40,7 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--lidar-port")
     ap.add_argument("--no-frames", action="store_true", help="discard camera frames")
+    ap.add_argument("--no-depth", action="store_true", help="discard ARKit depth")
     args = ap.parse_args()
 
     stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
@@ -85,6 +86,12 @@ def main() -> int:
                             msg.t_arrival_us, msg.t_device_us,
                             msg.width, msg.height, msg.jpeg,
                         )
+                    elif isinstance(msg, SceneDepth) and not args.no_depth:
+                        w.write_depth(
+                            msg.t_arrival_us,
+                            _DEPTH_HEAD.pack(msg.t_device_us, msg.width, msg.height,
+                                             *msg.intrinsics) + msg.depth_mm + msg.confidence,
+                        )
                     elif isinstance(msg, Hello):
                         w.set_device(msg.device_name, msg.os_version, msg.capability_names())
                         print(f"Phone   {msg.device_name}, iOS {msg.os_version}")
@@ -98,7 +105,8 @@ def main() -> int:
                         f"  {remaining:4.0f}s left   "
                         f"poses {w.counts['poses']:6d}  "
                         f"revs {w.counts['lidar']:5d}  "
-                        f"frames {w.counts['frames']:4d}",
+                        f"frames {w.counts['frames']:4d}  "
+                        f"depth {w.counts['depth']:4d}",
                         end="\r", flush=True,
                     )
                     last_print = now
@@ -124,6 +132,7 @@ def main() -> int:
     print(f"  poses  {counts['poses']}")
     print(f"  revs   {counts['lidar']}  ({counts['lidar_samples']} samples)")
     print(f"  frames {counts['frames']}")
+    print(f"  depth  {counts['depth']}")
     print(f"\nVerify:  python3 phase1_record_replay/check.py {out_dir}")
     return 0
 
