@@ -110,6 +110,29 @@ with unscaled intrinsics yields a plausible-looking but badly wrong cloud.
 
 ~144 KB per frame, so it is rate-limited on the phone like camera frames.
 
+### `0x05 MESH_CHUNK` — one ARKit mesh anchor, with semantic labels
+
+```
+t_device_us        u64
+anchor_id          16 bytes   stable UUID; later chunks REPLACE earlier ones
+transform          f32×16     anchor→world, column-major
+vertex_count       u32
+face_count         u32
+vertices           f32×3 × vertex_count    anchor-local
+faces              u32×3 × face_count      indices into vertices
+classification     u8  × face_count
+```
+
+Classification values: `0` none, `1` wall, `2` floor, `3` ceiling, `4` table,
+`5` seat, `6` window, `7` door. This is the free semantic layer — ARKit produces
+it on device with no model of ours, and it covers most of what room measurement
+needs.
+
+ARKit grows and revises mesh anchors continuously, so chunks are **replacements
+keyed on `anchor_id`**, not increments. The Mac keeps the most recent chunk per
+id. Sending only changed anchors, rate-limited, keeps this well under the depth
+stream's bandwidth despite there being many anchors.
+
 ### `0x10 LIDAR_REVOLUTION` — reserved, Pi bridge only
 
 ```

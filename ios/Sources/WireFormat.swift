@@ -10,6 +10,7 @@ enum WireFormat {
         case pose = 0x02
         case cameraFrame = 0x03
         case sceneDepth = 0x04
+        case meshChunk = 0x05
     }
 
     struct Capabilities: OptionSet {
@@ -84,6 +85,34 @@ enum WireFormat {
         p.append(depthMillimetres)
         p.append(confidence)
         return frame(.sceneDepth, p)
+    }
+
+    /// One ARKit mesh anchor with its per-face semantic labels.
+    ///
+    /// ARKit grows and revises these continuously, so a chunk is a REPLACEMENT
+    /// keyed on `anchorId`, not an increment. The Mac keeps the newest per id.
+    static func meshChunk(
+        timestampUs: UInt64,
+        anchorId: UUID,
+        transform: simd_float4x4,
+        vertices: Data,        // f32 x3 x n, anchor-local
+        faces: Data,           // u32 x3 x n
+        classification: Data   // u8 per face
+    ) -> Data {
+        var p = Data(capacity: 96 + vertices.count + faces.count + classification.count)
+        p.appendLE(timestampUs)
+        withUnsafeBytes(of: anchorId.uuid) { p.append(contentsOf: $0) }
+        // Column-major, matching simd's own layout; the Mac transposes.
+        for col in 0..<4 {
+            let c = transform[col]
+            p.appendLE(c.x); p.appendLE(c.y); p.appendLE(c.z); p.appendLE(c.w)
+        }
+        p.appendLE(UInt32(vertices.count / 12))
+        p.appendLE(UInt32(classification.count))
+        p.append(vertices)
+        p.append(faces)
+        p.append(classification)
+        return frame(.meshChunk, p)
     }
 
     static func cameraFrame(timestampUs: UInt64, width: UInt16, height: UInt16, jpeg: Data) -> Data {

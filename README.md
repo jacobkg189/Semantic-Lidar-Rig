@@ -19,7 +19,7 @@ phase1_record_replay/   ✅ record to disk, replay deterministically
 phase2_time_sync/       🟡 clock model done; lidar lag provisional
 phase3_extrinsics/      🟡 params cross-validated; residual is drift (Phase 4)
 phase4_fusion/          ✅ pose graph; ⬜ dense depth awaiting a recording
-phase5_semantics/       ⬜ project labels onto the fused cloud
+phase5_semantics/       ✅ ARKit mesh classification, 8 classes
 phase6_validation/      ⬜ measure the real error budget
 ios/                 the iOS app (grows across phases, XcodeGen-managed)
 test/                hardware bring-up bench test for the C1
@@ -47,7 +47,7 @@ cd ios && xcodegen generate
 | 2 | Time sync | Reproducible clock model | 🟡 clock model ✅; lag provisional, refined in Phase 3 |
 | 3 | Extrinsics | Self-consistent walls | 🟡 params cross-validated (1.3 cm); walls 4.2 cm, drift-limited |
 | 4 | Fusion | Loop closes; walls consistent | ✅ pose graph (3.4 cm, both walks); depth built |
-| 5 | Semantics | Labels stable across viewpoints | Not started |
+| 5 | Semantics | Labels stable across viewpoints | ✅ **Passed** — 8 classes, 147k faces |
 | 6 | Validation | Error budget vs tape measure | Not started |
 
 Full detail, including why the gates are shaped this way, in

@@ -26,7 +26,9 @@ sys.path[:0] = [
 
 from lidar_source import SerialLidarSource  # noqa: E402
 from phone_link import DEFAULT_HOST, DEFAULT_PORT, PhoneLinkError, PhoneStream  # noqa: E402
-from protocol import CameraFrame, Hello, Pose, SceneDepth, _POSE, _DEPTH_HEAD  # noqa: E402
+from protocol import (  # noqa: E402
+    CameraFrame, Hello, MeshChunk, Pose, SceneDepth, _DEPTH_HEAD, _MESH_HEAD, _POSE,
+)
 from rplidar_c1 import RPLidarError  # noqa: E402
 from session import SessionWriter  # noqa: E402
 
@@ -41,6 +43,7 @@ def main() -> int:
     ap.add_argument("--lidar-port")
     ap.add_argument("--no-frames", action="store_true", help="discard camera frames")
     ap.add_argument("--no-depth", action="store_true", help="discard ARKit depth")
+    ap.add_argument("--no-mesh", action="store_true", help="discard semantic mesh")
     args = ap.parse_args()
 
     stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
@@ -92,6 +95,14 @@ def main() -> int:
                             _DEPTH_HEAD.pack(msg.t_device_us, msg.width, msg.height,
                                              *msg.intrinsics) + msg.depth_mm + msg.confidence,
                         )
+                    elif isinstance(msg, MeshChunk) and not args.no_mesh:
+                        w.write_mesh(
+                            msg.t_arrival_us,
+                            _MESH_HEAD.pack(msg.t_device_us, msg.anchor_id, *msg.transform,
+                                            len(msg.vertices) // 12,
+                                            len(msg.classification))
+                            + msg.vertices + msg.faces + msg.classification,
+                        )
                     elif isinstance(msg, Hello):
                         w.set_device(msg.device_name, msg.os_version, msg.capability_names())
                         print(f"Phone   {msg.device_name}, iOS {msg.os_version}")
@@ -106,7 +117,8 @@ def main() -> int:
                         f"poses {w.counts['poses']:6d}  "
                         f"revs {w.counts['lidar']:5d}  "
                         f"frames {w.counts['frames']:4d}  "
-                        f"depth {w.counts['depth']:4d}",
+                        f"depth {w.counts['depth']:4d}  "
+                        f"mesh {w.counts['mesh']:4d}",
                         end="\r", flush=True,
                     )
                     last_print = now
@@ -133,6 +145,7 @@ def main() -> int:
     print(f"  revs   {counts['lidar']}  ({counts['lidar_samples']} samples)")
     print(f"  frames {counts['frames']}")
     print(f"  depth  {counts['depth']}")
+    print(f"  mesh   {counts['mesh']}")
     print(f"\nVerify:  python3 phase1_record_replay/check.py {out_dir}")
     return 0
 

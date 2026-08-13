@@ -34,6 +34,7 @@ LIDAR_HEAD = struct.Struct("<QIH")     # arrival, rev_id, sample_count
 LIDAR_SAMPLE = struct.Struct("<HHB")   # angle_q6, dist_q2, quality
 FRAME_HEAD = struct.Struct("<QQHHI")   # arrival, device_ts, w, h, jpeg_len
 DEPTH_HEAD = struct.Struct("<QI")      # arrival, payload length
+MESH_HEAD  = struct.Struct("<QI")      # arrival, payload length
 
 
 class Stream(IntEnum):
@@ -44,6 +45,7 @@ class Stream(IntEnum):
     LIDAR = 1
     FRAME = 2
     DEPTH = 3
+    MESH = 4
 
 
 @dataclass(frozen=True)
@@ -72,7 +74,8 @@ class SessionWriter:
         self._lidar = open(self.dir / "lidar.bin", "wb")
         self._frames = open(self.dir / "frames.bin", "wb")
         self._depth = open(self.dir / "depth.bin", "wb")
-        self.counts = {"poses": 0, "lidar": 0, "frames": 0, "depth": 0, "lidar_samples": 0}
+        self._mesh = open(self.dir / "mesh.bin", "wb")
+        self.counts = {"poses": 0, "lidar": 0, "frames": 0, "depth": 0, "mesh": 0, "lidar_samples": 0}
         self.meta: dict = {
             "format_version": FORMAT_VERSION,
             "notes": notes,
@@ -121,8 +124,14 @@ class SessionWriter:
         self._depth.write(DEPTH_HEAD.pack(t_arrival_us, len(payload)) + payload)
         self.counts["depth"] += 1
 
+    def write_mesh(self, t_arrival_us: int, payload: bytes) -> None:
+        """Mesh chunks are replacements keyed on anchor id, so the file holds a
+        history of revisions and the reader keeps the last one per anchor."""
+        self._mesh.write(MESH_HEAD.pack(t_arrival_us, len(payload)) + payload)
+        self.counts["mesh"] += 1
+
     def close(self) -> None:
-        for f in (self._poses, self._lidar, self._frames, self._depth):
+        for f in (self._poses, self._lidar, self._frames, self._depth, self._mesh):
             f.close()
         self.meta["counts"] = self.counts
         # Manifest is written last so its presence means the session is complete.
@@ -191,6 +200,20 @@ class SessionReader:
             yield Record(Stream.DEPTH, t, data[off + DEPTH_HEAD.size:end])
             off = end
 
+    def mesh(self) -> Iterator[Record]:
+        path = self.dir / "mesh.bin"
+        if not path.exists():
+            return
+        data = path.read_bytes()
+        off = 0
+        while off + MESH_HEAD.size <= len(data):
+            t, n = MESH_HEAD.unpack_from(data, off)
+            end = off + MESH_HEAD.size + n
+            if end > len(data):
+                break
+            yield Record(Stream.MESH, t, data[off + MESH_HEAD.size:end])
+            off = end
+
     def records(self) -> Iterator[Record]:
         """All streams merged into arrival order.
 
@@ -202,7 +225,8 @@ class SessionReader:
         merged = [
             (r.t_arrival_us, r.stream.value, i, r)
             for i, r in enumerate(list(self.poses()) + list(self.lidar())
-                                  + list(self.frames()) + list(self.depth()))
+                                  + list(self.frames()) + list(self.depth())
+                                  + list(self.mesh()))
         ]
         merged.sort(key=lambda x: (x[0], x[1], x[2]))
         for _, _, _, r in merged:

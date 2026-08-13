@@ -19,6 +19,7 @@ class MsgType(IntEnum):
     POSE = 0x02
     CAMERA_FRAME = 0x03
     SCENE_DEPTH = 0x04
+    MESH_CHUNK = 0x05
     LIDAR_REVOLUTION = 0x10
 
 
@@ -37,6 +38,7 @@ _HELLO_HEAD = struct.Struct("<H")
 _POSE = struct.Struct("<Q3f4f4fB")
 _FRAME_HEAD = struct.Struct("<QHHI")
 _DEPTH_HEAD = struct.Struct("<QHH4f")
+_MESH_HEAD = struct.Struct("<Q16s16fII")
 
 
 @dataclass
@@ -108,6 +110,33 @@ class SceneDepth:
         return d.astype(np.float32) / 1000.0, c
 
 
+MESH_LABELS = {
+    0: "none", 1: "wall", 2: "floor", 3: "ceiling",
+    4: "table", 5: "seat", 6: "window", 7: "door",
+}
+
+
+@dataclass
+class MeshChunk:
+    t_device_us: int
+    anchor_id: bytes
+    transform: tuple            # 16 floats, column-major, anchor -> world
+    vertices: bytes             # f32 x3 x n
+    faces: bytes                # u32 x3 x n
+    classification: bytes       # u8 per face
+    t_arrival_us: int = 0
+
+    def as_arrays(self):
+        """(vertices Nx3, faces Mx3, labels M, transform 4x4)."""
+        import numpy as np
+        v = np.frombuffer(self.vertices, dtype="<f4").reshape(-1, 3)
+        f = np.frombuffer(self.faces, dtype="<u4").reshape(-1, 3)
+        c = np.frombuffer(self.classification, dtype=np.uint8)
+        # simd is column-major; reshape then transpose to get row-major 4x4.
+        T = np.array(self.transform, dtype=np.float64).reshape(4, 4).T
+        return v, f, c, T
+
+
 @dataclass
 class UnknownMessage:
     """A type this build doesn't understand. Skipped, not fatal — that's what
@@ -152,6 +181,15 @@ def decode(type_id: int, payload: bytes):
         return SceneDepth(t, w, h, (fx, fy, cx, cy),
                           payload[off:off + 2 * n],
                           payload[off + 2 * n:off + 3 * n])
+
+    if type_id == MsgType.MESH_CHUNK:
+        vals = _MESH_HEAD.unpack_from(payload, 0)
+        t, aid, tf, nv, nf = vals[0], vals[1], vals[2:18], vals[18], vals[19]
+        off = _MESH_HEAD.size
+        vend = off + 12 * nv
+        fend = vend + 12 * nf
+        return MeshChunk(t, aid, tf, payload[off:vend],
+                         payload[vend:fend], payload[fend:fend + nf])
 
     if type_id == MsgType.CAMERA_FRAME:
         t, w, h, n = _FRAME_HEAD.unpack_from(payload, 0)

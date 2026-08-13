@@ -50,6 +50,17 @@ final class ARStreamer: NSObject, ObservableObject {
     private let depthQueue = DispatchQueue(label: "depth-pack", qos: .utility)
     @Published private(set) var depthCount: Int = 0
 
+    /// ARKit's scene mesh, with per-face classification — the free semantic
+    /// layer. Anchors are revised constantly, so each is re-sent at most every
+    /// `meshResendSeconds` and only a few per update, which keeps this far
+    /// cheaper than the depth stream despite there being many anchors.
+    var streamMesh: Bool = false
+    private var lastMeshSent: [UUID: TimeInterval] = [:]
+    private let meshResendSeconds: TimeInterval = 3.0
+    private let meshBudgetPerUpdate = 3
+    @Published private(set) var meshCount: Int = 0
+    @Published private(set) var meshAnchorCount: Int = 0
+
     private let jpegQueue = DispatchQueue(label: "jpeg-encode", qos: .utility)
     private let ciContext = CIContext()
 
@@ -220,6 +231,61 @@ extension ARStreamer: ARSessionDelegate {
 
             DispatchQueue.main.async { self.frameCount += 1 }
         }
+    }
+
+    func session(_ session: ARSession, didAdd anchors: [ARAnchor]) { sendMeshes(anchors) }
+    func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) { sendMeshes(anchors) }
+
+    private func sendMeshes(_ anchors: [ARAnchor]) {
+        guard streamMesh else { return }
+        let now = CACurrentMediaTime()
+        var budget = meshBudgetPerUpdate
+
+        for case let anchor as ARMeshAnchor in anchors {
+            guard budget > 0 else { break }
+            if let last = lastMeshSent[anchor.identifier], now - last < meshResendSeconds {
+                continue
+            }
+            lastMeshSent[anchor.identifier] = now
+            budget -= 1
+
+            let g = anchor.geometry
+            guard let cls = g.classification else { continue }
+
+            let verts = Self.rawVectors(g.vertices)
+            let faceCount = g.faces.count
+            let idxBytes = g.faces.bytesPerIndex * faceCount * g.faces.indexCountPerPrimitive
+            let faces = Data(bytes: g.faces.buffer.contents(), count: idxBytes)
+            let labels = Data(bytes: cls.buffer.contents().advanced(by: cls.offset),
+                              count: cls.count)
+
+            server.send(WireFormat.meshChunk(
+                timestampUs: UInt64(now * 1_000_000),
+                anchorId: anchor.identifier,
+                transform: anchor.transform,
+                vertices: verts,
+                faces: faces,
+                classification: labels
+            ), droppable: true)
+
+            DispatchQueue.main.async {
+                self.meshCount += 1
+                self.meshAnchorCount = self.lastMeshSent.count
+            }
+        }
+    }
+
+    /// Copy a geometry source out of its Metal buffer. The source is strided and
+    /// may be interleaved, so it cannot be memcpy'd wholesale.
+    private static func rawVectors(_ src: ARGeometrySource) -> Data {
+        var out = Data(capacity: src.count * 12)
+        let base = src.buffer.contents().advanced(by: src.offset)
+        for i in 0..<src.count {
+            let p = base.advanced(by: i * src.stride).assumingMemoryBound(to: Float.self)
+            var v = (p[0], p[1], p[2])
+            withUnsafeBytes(of: &v) { out.append(contentsOf: $0) }
+        }
+        return out
     }
 
     private static func describe(_ state: ARCamera.TrackingState) -> String {

@@ -35,12 +35,17 @@ struct ContentView: View {
             if model.streamer.depthCount > 0 {
                 row("Depth sent", "\(model.streamer.depthCount)")
             }
+            if model.streamer.meshCount > 0 {
+                row("Mesh chunks", "\(model.streamer.meshCount) / \(model.streamer.meshAnchorCount) anchors")
+            }
 
             Divider()
 
             Toggle("Stream camera frames (10 Hz)", isOn: $model.sendFrames)
                 .font(.callout)
             Toggle("Stream LiDAR depth (5 Hz)", isOn: $model.sendDepth)
+                .font(.callout)
+            Toggle("Stream semantic mesh", isOn: $model.sendMesh)
                 .font(.callout)
 
             Text(model.hint)
@@ -76,6 +81,9 @@ final class StreamModel: ObservableObject {
     }
     @Published var sendDepth = false {
         didSet { streamer.sceneDepthHz = sendDepth ? 5 : 0 }
+    }
+    @Published var sendMesh = false {
+        didSet { streamer.streamMesh = sendMesh }
     }
 
     var hint: String {
