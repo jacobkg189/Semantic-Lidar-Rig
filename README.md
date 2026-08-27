@@ -7,6 +7,30 @@ below the lidar on a shared rigid frame.
 The C1 supplies long-range geometry and drift correction; the phone supplies
 pose, dense short-range depth, and semantics. Neither alone does the job.
 
+## This is part 1
+
+The end goal is **autonomous drone navigation through the house** using the
+scanned map. That reframes what "good enough" means — this is the mapping
+front-end of a robotics stack, not a visualisation project.
+
+Consequences that drive design decisions:
+
+- **A point cloud is not a navigation map.** A drone needs occupied / free /
+  **unknown** per voxel, built by ray-casting from sensor poses. Unknown must be
+  treated as solid.
+- **Glass and thin obstacles are the real danger.** Both sensors are near-IR and
+  largely blind to windows, wires and chair legs. A sensing limit, not a software
+  one.
+- **Height coverage matters.** Drones fly where a hand-held rig never scanned.
+- **Whole-house means multi-session registration.** Each ARKit session has an
+  arbitrary origin — two walks of the same room came out -10.7 deg and +5.3 deg
+  apart.
+- **The map is only a prior.** The drone still needs onboard localisation at
+  flight time, which is a separate system of comparable size to this one.
+
+Order before anything flies: Phase 6 validation → occupancy grid with free-space
+carving → coverage tooling → multi-session registration.
+
 ## Layout
 
 Work is split by phase — each phase folder owns its own code, README, goal, and
@@ -21,6 +45,7 @@ phase3_extrinsics/      🟡 params cross-validated; residual is drift (Phase 4)
 phase4_fusion/          ✅ pose graph; ⬜ dense depth awaiting a recording
 phase5_semantics/       ✅ ARKit mesh classification, 8 classes
 phase6_validation/      ⬜ measure the real error budget
+phase7_occupancy/       ✅ occupancy grid — free/occupied/unknown for planning
 ios/                 the iOS app (grows across phases, XcodeGen-managed)
 test/                hardware bring-up bench test for the C1
 docs/                PLAN.md (all phases) and WIRE_FORMAT.md (the contract)
@@ -49,6 +74,7 @@ cd ios && xcodegen generate
 | 4 | Fusion | Loop closes; walls consistent | ✅ pose graph (3.4 cm, both walks); depth built |
 | 5 | Semantics | Labels stable across viewpoints | ✅ **Passed** — 8 classes, 147k faces |
 | 6 | Validation | Error budget vs tape measure | Not started |
+| 7 | Occupancy | Navigable volume for planning | ✅ 18.4 m³ free, 6.5 m³ at 30 cm clearance |
 
 Full detail, including why the gates are shaped this way, in
 [docs/PLAN.md](docs/PLAN.md).
