@@ -1,0 +1,9 @@
+{
+  "_comment": "Tape-measured ground truth, in METRES. Copy to truth.json and fill in.",
+  "_note": "Measure wall FACE to wall FACE, not skirting to skirting.",
+
+  "wall span A (outer to outer)": 0.00,
+  "wall span B (outer to outer)": 0.00,
+  "floor to ceiling": 0.00,
+  "door width": 0.00
+}

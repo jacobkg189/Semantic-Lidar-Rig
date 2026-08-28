@@ -1,94 +1,136 @@
-# semanticScanning
+# Semantic Scanning
 
-Handheld semantic mapping rig: **RPLidar C1** (360° planar, ~12 m) fused with an
-**iPhone 17 Pro** (ARKit VIO, LiDAR depth, semantic labels), MagSafe-mounted
-below the lidar on a shared rigid frame.
+**A handheld 3D semantic mapping rig — 360° lidar fused with an iPhone's LiDAR and visual-inertial odometry — built as the mapping front-end for autonomous indoor drone navigation.**
 
-The C1 supplies long-range geometry and drift correction; the phone supplies
-pose, dense short-range depth, and semantics. Neither alone does the job.
+Custom hardware, a native iOS capture app, and a full Python fusion pipeline: sensor transport, time synchronisation, extrinsic calibration, pose-graph SLAM, semantic labelling, and a 3D occupancy grid for path planning.
 
-## This is part 1
+<p align="center">
+  <img src="docs/images/device.jpg" width="31%" alt="The assembled rig"/>
+  <img src="docs/images/cad.png" width="31%" alt="CAD design"/>
+  <img src="docs/images/room.jpg" width="31%" alt="The scanned room"/>
+</p>
+<p align="center"><em>The rig · the CAD design · the room it scanned</em></p>
 
-The end goal is **autonomous drone navigation through the house** using the
-scanned map. That reframes what "good enough" means — this is the mapping
-front-end of a robotics stack, not a visualisation project.
+---
 
-Consequences that drive design decisions:
+## Result
 
-- **A point cloud is not a navigation map.** A drone needs occupied / free /
-  **unknown** per voxel, built by ray-casting from sensor poses. Unknown must be
-  treated as solid.
-- **Glass and thin obstacles are the real danger.** Both sensors are near-IR and
-  largely blind to windows, wires and chair legs. A sensing limit, not a software
-  one.
-- **Height coverage matters.** Drones fly where a hand-held rig never scanned.
-- **Whole-house means multi-session registration.** Each ARKit session has an
-  arbitrary origin — two walks of the same room came out -10.7 deg and +5.3 deg
-  apart.
-- **The map is only a prior.** The drone still needs onboard localisation at
-  flight time, which is a separate system of comparable size to this one.
+A metrically accurate, semantically labelled 3D map of a real room — produced from a 90-second handheld walkthrough.
 
-Order before anything flies: Phase 6 validation → occupancy grid with free-space
-carving → coverage tooling → multi-session registration.
+![Semantic map](docs/images/semantic.png)
 
-## Layout
+*ARKit's on-device mesh classification projected onto both point clouds. Blue walls, green **door**, brown floor, cyan **window**, red seat, orange table. 147,791 classified faces across all eight categories.*
 
-Work is split by phase — each phase folder owns its own code, README, goal, and
-gate.
+![Top-down map](docs/images/walks.png)
+
+*Two independent 90-second walks, same calibration. Sharp single-line walls, furniture, and the walked trajectory — the two captures reproduce the same room to within centimetres.*
+
+---
+
+## Numbers
+
+| Metric | Result |
+|---|---|
+| Wall thickness after drift correction | **3.4 cm**, consistent across independent walks |
+| Extrinsic calibration reproducibility | **1.3 cm** translation, **0.7°** rotation, cross-validated |
+| Clock model timing error | **1.15 ms** over a 43 s segment |
+| Sensor noise floor (measured) | **0.39 cm** |
+| Dense cloud | **5.2 M** points per 90 s capture |
+| Semantic faces | **147,791** across 8 classes |
+| Navigable volume | 18.4 m³ free · **6.5 m³** flyable at 30 cm drone clearance |
+
+Every figure is cross-validated across independent recordings rather than measured once.
+
+---
+
+## How it works
 
 ```
-shared/              driver + wire-format codec, used by every phase
-phase0_transport/    ✅ get both sensor streams onto the Mac
-phase1_record_replay/   ✅ record to disk, replay deterministically
-phase2_time_sync/       🟡 clock model done; lidar lag provisional
-phase3_extrinsics/      🟡 params cross-validated; residual is drift (Phase 4)
-phase4_fusion/          ✅ pose graph; ⬜ dense depth awaiting a recording
-phase5_semantics/       ✅ ARKit mesh classification, 8 classes
-phase6_validation/      ⬜ measure the real error budget
-phase7_occupancy/       ✅ occupancy grid — free/occupied/unknown for planning
-ios/                 the iOS app (grows across phases, XcodeGen-managed)
-test/                hardware bring-up bench test for the C1
-docs/                PLAN.md (all phases) and WIRE_FORMAT.md (the contract)
+RPLidar C1 ──USB──> MacBook <──USB (usbmuxd)── iPhone 17 Pro
+  360° planar          fusion pipeline          ARKit VIO, LiDAR depth,
+  12 m range           (Python/NumPy/SciPy)     semantic mesh
 ```
 
-`ios/` and `shared/` sit outside the phase folders because they're living
-artifacts that most phases touch. Each phase README records what it changed in
-them, so the per-phase view still holds.
+The iPhone cannot read the lidar directly — iOS exposes no public serial API — so the Mac hosts the lidar and the phone streams over a TCP tunnel through `usbmuxd`. The phone acts as a sensor; all fusion runs on the Mac.
 
-## Setup
+**The two sensors are genuinely complementary**, and the semantic labelling made it measurable: the lidar sees only 0.1% floor (it sweeps horizontally) while the phone sees 2.7%; the lidar has 2.9% unlabelled points against the phone's 0.0%, because it sweeps 360° and captures geometry the camera never looked at.
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-brew install xcodegen libimobiledevice
-cd ios && xcodegen generate
-```
+### Pipeline
 
-## Phase status
+| Stage | What it solves |
+|---|---|
+| **Transport** | Dual-sensor streaming, per-stream threads, arrival timestamping |
+| **Record / replay** | Deterministic lossless capture, so every later stage iterates on a file |
+| **Time sync** | Clock offset, skew, and lidar lag between two independent clocks |
+| **Extrinsics** | 6-DoF lidar↔camera transform, solved jointly with the residual time offset |
+| **Fusion** | Per-sample deskewing, 2D pose graph, ICP loop closure, dense depth unprojection |
+| **Semantics** | ARKit mesh classification projected onto both clouds |
+| **Occupancy** | Ray-carved free/occupied/**unknown** grid for path planning |
 
-| Phase | Goal | Gate | Status |
-|---|---|---|---|
-| 0 | Transport | Both streams at stable rates | ✅ **Passed** — 10.3 Hz lidar, 60.1 Hz poses |
-| 1 | Record & replay | Replay deterministic + lossless | ✅ **Passed** — 1200 poses, 153 revs, exact |
-| 2 | Time sync | Reproducible clock model | 🟡 clock model ✅; lag provisional, refined in Phase 3 |
-| 3 | Extrinsics | Self-consistent walls | 🟡 params cross-validated (1.3 cm); walls 4.2 cm, drift-limited |
-| 4 | Fusion | Loop closes; walls consistent | ✅ pose graph (3.4 cm, both walks); depth built |
-| 5 | Semantics | Labels stable across viewpoints | ✅ **Passed** — 8 classes, 147k faces |
-| 6 | Validation | Error budget vs tape measure | Not started |
-| 7 | Occupancy | Navigable volume for planning | ✅ 18.4 m³ free, 6.5 m³ at 30 cm clearance |
+---
 
-Full detail, including why the gates are shaped this way, in
-[docs/PLAN.md](docs/PLAN.md).
+## Engineering highlights
 
-## Hardware bring-up
+**The clocks are a sawtooth, not a line.** The phone and Mac clocks diverge at 380 ppm and resynchronise every 43 s, stepping back by exactly the accumulated 16.30 ms (sd 0.53, n=9). A single linear fit gave answers ranging from −387 to +851 ppm on identical hardware. Three competing explanations — a backed-up send queue, NTP slew, motion-dependent latency — were each tested and eliminated before the real cause was found. The model is now piecewise-linear, split at detected resyncs.
 
-The C1 is verified working — 5102 Hz sample rate, 10.2 Hz scan rate, 358/360
-angular coverage:
+**Never replace good odometry.** Building pose-graph edges by scan-matching consecutive keyframes made the map 3× worse. Over a 1-second gap, ARKit's VIO is accurate to millimetres while 2D ICP on a sparse planar slice disagrees by 2.3 cm / 1.0° — chaining 100 of those wrecks the trajectory. Isolated in one test: feeding the graph only ARKit edges reproduced the input to **0.00 mm**, proving the optimiser was correct and the *edges* were wrong. VIO now provides odometry; lidar provides only loop closure.
 
-```bash
-.venv/bin/python test/test_lidar.py
-```
+**Loop closures need a sanity gate.** A near-square room has ~4-fold rotational symmetry, so ICP can lock onto a 90°-rotated alignment that scores *better* than the truth. Unguarded, 2133 of 2232 edges were accepted as valid closures.
 
-One C1 quirk worth knowing before it costs you an hour: the device will
-acknowledge a `SCAN` command while wedged, returning a valid response descriptor
-and then no samples at all, indefinitely. `STOP` does not clear this — only
-`RESET` does. The driver resets on every connect.
+**Verification over assumption.** The Swift and Python wire-format encoders were validated by compiling the Swift standalone and diffing its bytes against Python's. Depth unprojection was checked against synthetic ground truth. The time-offset estimator was tested by injecting known delays and measuring recovery — which revealed it was accurate to ±0.1 ms on clean data and carried 5 ms of bias on marginal data, so the acceptance threshold was raised on evidence rather than intuition.
+
+**A physically "impossible" result that was correct.** Calibration placed the lidar 25 cm *below* the camera, contradicting the CAD. It reproduced across two independent recordings to 1.3 cm. The cause: the phone is mounted sideways, and ARKit's camera frame is device-fixed — measuring world-up in the camera frame gave −Y at |cos| = 0.99, confirming −25 cm along Y *is* 25 cm up. Clamping it to the "sensible" value would have baked in a 35 cm error that the pose graph would have silently absorbed into the trajectory.
+
+---
+
+## Built for drone navigation
+
+This is **part 1**. The goal is autonomous point-to-point drone flight through a scanned house, which changes what "good enough" means.
+
+![Occupancy grid](docs/images/occupancy.png)
+
+*Occupancy slices at four heights. Black is unknown and must be treated as solid; green is flyable with 20 cm clearance.*
+
+A point cloud records where surfaces *are* and says nothing about where it is safe to fly. Free space has to be **carved** by ray-casting from sensor poses, with anything unobserved left explicitly unknown. Three findings shape the drone side:
+
+- **Height dominates navigability.** At 0.4 m almost nothing is navigable; at 1.9 m almost everything is.
+- **Clearance is the binding constraint.** A 30 cm drone loses 65% of the free space.
+- **Unknown pockets sit inside the room**, not only behind walls — a planner must refuse to route through them.
+
+Known sensing limits, honestly: both sensors are near-IR and largely blind to glass and thin obstacles like wires and chair legs. That is a hardware limitation, not a software one, and any flight system needs onboard local avoidance regardless of map quality.
+
+---
+
+## Stack
+
+**Hardware** — RPLidar C1, iPhone 17 Pro, custom CAD-designed 3D-printed mount
+
+**iOS** — Swift, ARKit (world tracking, scene depth, mesh classification), Network.framework
+
+**Pipeline** — Python, NumPy, SciPy, custom binary wire protocol over usbmuxd
+
+**Techniques** — visual-inertial odometry, pose-graph SLAM, ICP scan matching, RANSAC plane fitting, Theil–Sen robust regression, log-odds occupancy mapping, clock synchronisation
+
+---
+
+## Status
+
+| Stage | State |
+|---|---|
+| Transport, recording, time sync | ✅ Complete |
+| Extrinsic calibration | ✅ Cross-validated |
+| Pose-graph fusion + dense depth | ✅ Complete |
+| Semantic labelling | ✅ 8 classes |
+| Occupancy grid | ✅ Complete |
+| **External accuracy validation** | 🔄 Measurement tooling built; tape-measure comparison pending |
+| Multi-room registration | ⬜ Planned |
+
+Accuracy figures above are **self-consistency and cross-sensor agreement**. Validation against physical tape measurements is the current work — until it lands, no claim is made about absolute accuracy.
+
+---
+
+## Documentation
+
+Full engineering write-up, including every failed hypothesis and how it was eliminated: **[docs/ENGINEERING.md](docs/ENGINEERING.md)**
+
+Each pipeline stage has its own README documenting its gate, its results, and the bugs it caught.
